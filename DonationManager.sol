@@ -2,8 +2,13 @@
 pragma solidity >=0.7.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-contract DonationManager is IDonationManager {
+/**
+ * @title DonationManager
+ * @dev Contract for managing and distributing donations among whitelisted receivers.
+ */
+contract DonationManager is IDonationManager, ReentrancyGuard {
 
     using ReflectionUtilities for address;
     using TransferUtilities for address;
@@ -18,17 +23,23 @@ contract DonationManager is IDonationManager {
 
     address[] public whitelistedReceivers;
     uint256[] public whitelistedPercentages;
-    address public emergencyReceiver;
 
-    //Constructor init
+    /**
+     * @dev Constructor function for initializing the DonationManager contract.
+     * @param initData Initialization data containing parameters for the contract.
+     */
     constructor(bytes memory initData) {
         uint256 firstSplitBlock;
-        (firstSplitBlock, splitInterval, whitelistedReceivers, whitelistedPercentages, emergencyReceiver, flushExecutorRewardPercentage, executorRewardPercentage) = abi.decode(initData, (uint256, uint256, address[], uint256[], address, uint256, uint256));
+        (firstSplitBlock, splitInterval, whitelistedReceivers, whitelistedPercentages, flushExecutorRewardPercentage, executorRewardPercentage) = abi.decode(initData, (uint256, uint256, address[], uint256[], uint256, uint256));
         _setReceiversAndPercentages(whitelistedReceivers, whitelistedPercentages);
         lastSplitBlock = firstSplitBlock < splitInterval ? firstSplitBlock : (firstSplitBlock - splitInterval);
     }
 
+    /**
+     * @dev Fallback function that calls distributeDonations().
+     */
     receive() external payable {
+        distributeDonations();
     }
 
     function _supportsInterface(bytes4 interfaceId) internal pure returns(bool) {
@@ -42,21 +53,35 @@ contract DonationManager is IDonationManager {
             interfaceId == this.distributeDonations.selector;
     }
 
+    /**
+     * @dev Returns the block number for the next scheduled distribution.
+     * @return The next scheduled distribution block number.
+     */
     function nextSplitBlock() public view returns(uint256) {
         return lastSplitBlock == 0 ? 0 : (lastSplitBlock + splitInterval);
     }
 
+    /**
+     * @dev Returns the whitelisted receivers and their
+     /**
+     * @dev Returns the whitelisted receivers and their corresponding percentages.
+     * @return receivers Array of whitelisted receiver addresses.
+     * @return percentages Array of percentages for each whitelisted receiver.
+     */
     function receiversAndPercentages() public view returns (address[] memory receivers, uint256[] memory percentages) {
         receivers = whitelistedReceivers;
         percentages = whitelistedPercentages;
     }
 
-    //main contract function. It splits ETH among whitelisted ONG entities
-    //this function can be called once every splitInterval blocks by anyone
-    //the msg.sender is the executor of the function and it takes a percentage of the split value
-    function distributeDonations() external {
-        require(block.number >= nextSplitBlock(), "too early");
-        lastSplitBlock = block.number;
+    /**
+     * @dev Main contract function that distributes ETH among whitelisted receiver entities.
+     * This function can be called once every splitInterval blocks by anyone.
+     * The msg.sender is the executor of the function and takes a percentage of the distributed value.
+     */
+    function distributeDonations() public nonReentrant() {
+        if (block.number < nextSplitBlock()){
+            return;
+        }
 
         uint256 availableAmount = address(this).balance;
 
@@ -75,45 +100,40 @@ contract DonationManager is IDonationManager {
         (address[] memory addresses, uint256[] memory percentages) = receiversAndPercentages();
 
         require(addresses.length > 0);
-        
-        address receiver;
+
         for(uint256 i = 0; i < addresses.length - 1; i++) {
-            receiver = addresses[i];
-            receiver = receiver != address(0) ? receiver : emergencyReceiver;
+            address receiver = addresses[i];
+            require(receiver != address(0), "invalid address");
             receiverAmount = _calculatePercentage(availableAmount, percentages[i]);
             receiver.submit(receiverAmount, "");
-            emit DistributedDonation(receiver, receiverAmount, block.timestamp);
             remainingAmount -= receiverAmount;
+            emit DistributedDonation(receiver, receiverAmount, block.timestamp);
         }
 
-        receiver = addresses[addresses.length - 1];
-        receiver = receiver != address(0) ? receiver : emergencyReceiver;
-        receiver.submit(remainingAmount, "");
-        emit DistributedDonation(receiver, remainingAmount, block.timestamp);
+        address finalReceiver = addresses[addresses.length - 1];
+        require(finalReceiver != address(0), "invalid address");
+        finalReceiver.submit(remainingAmount, "");
+
+        lastSplitBlock = block.number;
+
+        emit DistributedDonation(finalReceiver, remainingAmount, block.timestamp);
     }
 
-    function flushETH() external {
-        address to = msg.sender;
-        address wallet = emergencyReceiver;
-        require(wallet != address(0), "zero");
-
-        uint256 availableAmount = address(this).balance;
-        require(availableAmount > 0, "value");
-
-        address tokenAddress = address(0);
-
-        if(flushExecutorRewardPercentage > 0) {
-            uint256 receiverAmount = _calculatePercentage(availableAmount, flushExecutorRewardPercentage);
-            tokenAddress.safeTransfer(to, receiverAmount);
-            availableAmount -= receiverAmount;
-        }
-        tokenAddress.safeTransfer(wallet, availableAmount);
-    }
-
+    /**
+     * @dev Helper function for calculating a percentage of a value.
+     * @param totalSupply The total supply or value.
+     * @param percentage The percentage to calculate.
+     * @return The calculated percentage of the total supply.
+     */
     function _calculatePercentage(uint256 totalSupply, uint256 percentage) private pure returns(uint256) {
         return (totalSupply * ((percentage * 1e18) / ONE_HUNDRED)) / 1e18;
     }
 
+    /**
+     * @dev Helper function for setting whitelisted receivers and their percentages.
+     * @param receivers Array of receiver addresses.
+     * @param percentages Array of percentages for each receiver.
+     */
     function _setReceiversAndPercentages(address[] memory receivers, uint256[] memory percentages) private {
         delete whitelistedReceivers;
         delete whitelistedPercentages;
@@ -129,6 +149,11 @@ contract DonationManager is IDonationManager {
         require(percentage < ONE_HUNDRED, "overflow");
     }
 }
+
+/**
+ * @title ReflectionUtilities
+ * @dev Utility library.
+ */
 
 library ReflectionUtilities {
 
@@ -152,34 +177,11 @@ library ReflectionUtilities {
         }
     }
 
-    function isContract(address subject) internal view returns (bool) {
-        if(subject == address(0)) {
-            return false;
-        }
-        uint256 codeLength;
-        assembly {
-            codeLength := extcodesize(subject)
-        }
-        return codeLength > 0;
-    }
-
-    function clone(address originalContract) internal returns(address copyContract) {
-        assembly {
-            mstore(
-                0,
-                or(
-                    0x5880730000000000000000000000000000000000000000803b80938091923cF3,
-                    mul(originalContract, 0x1000000000000000000)
-                )
-            )
-            copyContract := create(0, 0, 32)
-            switch extcodesize(copyContract)
-                case 0 {
-                    invalid()
-                }
-        }
-    }
 }
+/**
+ * @title TransferUtilities
+ * @dev Utility library.
+ */
 
 library TransferUtilities {
     using ReflectionUtilities for address;
