@@ -1,3 +1,6 @@
+# Ux-UI
+https://www.figma.com/file/hjnyGRGmo5fjC5oxENzlsW/GiveWise?t=NBwxsj5443GPG2Se-1
+
 # Donation-Manager
 The DonationsManager contract is designed to collect ETH and distribute it in equal proportions to whitelisted ONG addresses. 
 The smart contract is connected to a web app dashboard and is a Proof of Concept (POC) that Urbe.eth will showcase at "The common-good side of web3" event organized by Veracura and Urbe.eth in Rome (Wegil) on 25/03/2023.
