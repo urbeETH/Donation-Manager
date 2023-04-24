@@ -1,4 +1,4 @@
-# Ux-UI
+# UX-UI
 https://www.figma.com/file/hjnyGRGmo5fjC5oxENzlsW/GiveWise?t=NBwxsj5443GPG2Se-1
 
 # Donation-Manager
